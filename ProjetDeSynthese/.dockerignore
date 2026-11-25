@@ -1,0 +1,12 @@
+# Fichiers que Docker ne doit pas envoyer à la construction de l'image
+results/
+data/
+bin/
+classes/
+*.mv.db
+*.trace.db
+*.log
+.git/
+.settings/
+.metadata/
+.env

@@ -1,0 +1,75 @@
+# Docker Compose du projet de synthèse.
+#
+# Un essai utilise trois conteneurs, tous faits à partir de la même image :
+#   service-paiement : le service à mesurer (port 8080)
+#   controleur-b     : la stratégie B, seulement avec le profil Compose « strategie-b »
+#   generateur       : joue la trace, mesure, écrit les résultats, puis s'arrête
+#
+# Les scripts du dossier scripts/ lancent les essais. Exemple à la main (PowerShell) :
+#   $env:STRATEGIE="B"; $env:PROFIL="rafales"; $env:GRAINE="3"; $env:WORKERS_DEPART="5"
+#   docker compose --profile strategie-b up --abort-on-container-exit --exit-code-from generateur
+#   docker compose --profile strategie-b down --volumes
+
+name: paiement
+
+services:
+
+  service-paiement:
+    build: .                      # Construire l'image avec le Dockerfile du dossier
+    image: projet-paiement:1.0    # Nom donné à l'image construite
+    environment:
+      WORKERS_DEPART: ${WORKERS_DEPART:-16}   # 16 pour A, 5 pour B
+      H2_PASSWORD: ${H2_PASSWORD:?Créer le fichier .env avec H2_PASSWORD}
+      BD_URL: jdbc:h2:/app/data/paiement;DB_CLOSE_DELAY=-1
+    ports:
+      - "8080:8080"               # port de l'ordinateur : port du conteneur
+    volumes:
+      - base-paiement:/app/data   # La base H2 vit dans un volume nommé
+    cpus: 2                       # Même puissance pour tous les essais
+    mem_limit: 1g
+    healthcheck:
+      # Le service est « healthy » quand GET /health répond 200
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  controleur-b:
+    image: projet-paiement:1.0
+    profiles: ["strategie-b"]     # Démarre seulement avec --profile strategie-b
+    command: ["ProjetDeSynthese/strategie.ControleurAdaptatif"]
+    environment:
+      URL_SERVICE: http://service-paiement:8080   # Le nom du service sert d'adresse
+    depends_on:
+      service-paiement:
+        condition: service_healthy
+    healthcheck:
+      # Le contrôleur crée ce fichier après sa première décision
+      test: ["CMD", "test", "-f", "/tmp/controleur-pret"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+
+  generateur:
+    image: projet-paiement:1.0
+    command:
+      - ProjetDeSynthese/exxperiences.CampagneEssais
+      - --un-essai
+      - ${STRATEGIE:-A}
+      - ${PROFIL:-stable}
+      - ${GRAINE:-1}
+    environment:
+      URL_SERVICE: http://service-paiement:8080
+      DOSSIER_RESULTATS: /app/results
+    volumes:
+      - ./results:/app/results    # Les résultats arrivent dans le dossier results du projet
+    depends_on:
+      service-paiement:
+        condition: service_healthy
+      controleur-b:
+        condition: service_healthy
+        required: false           # Pour la stratégie A, ce conteneur n'existe pas
+
+volumes:
+  base-paiement:                  # Volume vidé après chaque essai (down --volumes)

@@ -1,0 +1,7 @@
+bin/
+classes/
+results/
+data/
+*.mv.db
+*.trace.db
+.env
